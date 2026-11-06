@@ -21,6 +21,6 @@ Déployable tel quel sur GitHub Pages, Netlify, etc.
 ## Technique
 
 - Redimensionnement Lanczos3 + accentuation via [pica](https://github.com/nodeca/pica) (`vendor/pica.min.js`, MIT)
-- IA : [UpscalerJS](https://upscalerjs.com) (MIT) + [TensorFlow.js](https://www.tensorflow.org/js) (Apache-2.0), modèle ESRGAN-slim x4 (`vendor/esrgan-slim-x4/`)
+- IA : [UpscalerJS](https://upscalerjs.com) (MIT) + [TensorFlow.js](https://www.tensorflow.org/js) (Apache-2.0), modèle ESRGAN-slim x4 (`vendor/esrgan-slim-x4/`, poids renommés en `.wasm` pour être servis partout tels quels)
 - ZIP via [JSZip](https://github.com/Stuk/jszip) (`vendor/jszip.min.js`, MIT/GPLv3)
 - Sortie JPEG 95 % pour les photos, PNG pour les formats pouvant contenir de la transparence
