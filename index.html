@@ -219,6 +219,25 @@ async function run() {
   running = false;
 }
 
+// Inside the claude.ai viewer, downloads must go through its `downloads` capability;
+// hosted anywhere else, a plain download link works.
+let dl = null; // the click handler needs it synchronously to cancel the native link
+window.claude?.use?.('downloads').then(ns => dl = ns, () => {});
+async function saveFile(filename, blob) {
+  if (dl) return dl.save({ filename, data: blob });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+grid.addEventListener('click', e => {
+  const a = e.target.closest('.dl');
+  const item = a && items.find(i => i.el.contains(a));
+  if (!item?.blob || !dl) return;
+  e.preventDefault();
+  saveFile(item.outName, item.blob).catch(err => err?.code !== 'declined' && alert('Téléchargement impossible : ' + err.message));
+});
+
 zipBtn.onclick = async () => {
   const done = items.filter(i => i.status === 'done');
   zipBtn.disabled = true;
@@ -233,11 +252,9 @@ zipBtn.onclick = async () => {
     }
     // Images are already compressed: STORE avoids wasting time recompressing them.
     const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
-    const url = URL.createObjectURL(blob);
-    const a = Object.assign(document.createElement('a'), { href: url, download: 'images_4k.zip' });
-    document.body.append(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    await saveFile('images_4k.zip', blob);
   } catch (e) {
+    if (e?.code === 'declined') return refresh();
     console.error(e);
     alert('Impossible de créer le ZIP : ' + e.message);
   }
