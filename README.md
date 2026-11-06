@@ -1,6 +1,6 @@
 # Upscaler 4K
 
-Site statique pour agrandir des images en 4K en 1080p, 2K, 4K ou à la résolution détectée de l'écran, en paysage ou en vertical (proportions conservées).
+Site statique pour agrandir des images en 1080p, 2K, 4K ou à la résolution détectée de l'écran, en paysage ou en vertical (proportions conservées).
 
 - Glisser-déposer, sélection ou collage (Ctrl+V) de plusieurs images à la fois
 - Traitement par lot automatique avec progression
