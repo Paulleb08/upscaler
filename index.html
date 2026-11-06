@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upscaler 4K</title>
+<meta name="description" content="Agrandissez vos images en 4K directement dans votre navigateur, une par une ou par lot.">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #16181d; --muted: #646b78; --border: #e2e5ea;
+    --accent: #4f46e5; --accent-text: #fff; --ok: #15803d; --err: #b91c1c; --soft: #eef0ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #181b21; --text: #e8eaee; --muted: #9aa1ad; --border: #2a2f38;
+      --accent: #818cf8; --accent-text: #0f1115; --ok: #4ade80; --err: #f87171; --soft: #1f2233;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { margin: 0; font-size: 1.9rem; letter-spacing: -0.02em; }
+  .sub { margin: 4px 0 24px; color: var(--muted); }
+
+  .drop { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+          min-height: 190px; padding: 24px; text-align: center; cursor: pointer;
+          border: 2px dashed var(--border); border-radius: 16px; background: var(--card);
+          transition: border-color .15s, background .15s; }
+  .drop:hover, .drop.over, .drop:focus-within { border-color: var(--accent); background: var(--soft); }
+  .drop strong { font-size: 1.1rem; }
+  .drop span { color: var(--muted); font-size: .9rem; }
+  .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .drop svg { width: 40px; height: 40px; color: var(--accent); }
+
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 20px 0 12px; }
+  .bar .info { flex: 1 1 200px; color: var(--muted); font-size: .95rem; }
+  button, .btn { font: inherit; font-size: .95rem; padding: 9px 16px; border-radius: 10px; cursor: pointer;
+                 border: 1px solid var(--border); background: var(--card); color: var(--text);
+                 text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:not(:disabled):hover, .btn:hover { filter: brightness(1.06); }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+  progress { width: 100%; height: 8px; appearance: none; border: 0; border-radius: 99px; overflow: hidden;
+             background: var(--border); }
+  progress::-webkit-progress-bar { background: var(--border); }
+  progress::-webkit-progress-value { background: var(--accent); }
+  progress::-moz-progress-bar { background: var(--accent); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; margin-top: 16px;
+          padding: 0; list-style: none; }
+  .item { background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+          display: flex; flex-direction: column; }
+  .thumb { aspect-ratio: 4 / 3; background: var(--soft); display: grid; place-items: center; overflow: hidden; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .meta { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .name { font-weight: 600; font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dims { color: var(--muted); font-size: .82rem; font-variant-numeric: tabular-nums; min-height: 1.2em; }
+  .status { font-size: .85rem; }
+  .status.done { color: var(--ok); } .status.error { color: var(--err); }
+  .actions { display: flex; gap: 8px; margin-top: auto; padding-top: 4px; }
+  .actions .btn { flex: 1; justify-content: center; padding: 7px 10px; font-size: .88rem; }
+  .actions .btn[aria-disabled="true"] { opacity: .45; pointer-events: none; }
+  .actions button { padding: 7px 12px; font-size: .88rem; }
+  footer { margin-top: 40px; color: var(--muted); font-size: .82rem; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Upscaler 4K</h1>
+  <p class="sub">Agrandissez vos images en 4K (3840 × 2160). Tout se fait dans votre navigateur : vos images ne quittent jamais votre appareil.</p>
+
+  <label class="drop" id="drop">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 16V4m0 0-4 4m4-4 4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+    </svg>
+    <strong>Glissez vos images ici ou cliquez pour les choisir</strong>
+    <span>Plusieurs images à la fois · JPG, PNG, WebP, GIF, BMP, AVIF… · ou collez avec Ctrl+V</span>
+    <input id="input" type="file" accept="image/*" multiple>
+  </label>
+
+  <div class="bar">
+    <div class="info" id="info" aria-live="polite">Aucune image pour le moment.</div>
+    <button class="primary" id="zip" disabled>Tout télécharger (.zip)</button>
+    <button id="clear" disabled>Tout effacer</button>
+  </div>
+  <progress id="progress" value="0" max="1" hidden></progress>
+
+  <ul class="grid" id="grid"></ul>
+
+  <footer>Redimensionnement Lanczos3 avec accentuation des détails. Les photos sont exportées en JPEG (qualité 95 %), les images pouvant contenir de la transparence en PNG.</footer>
+</main>
+
+<template id="tpl">
+  <li class="item">
+    <div class="thumb"><img alt=""></div>
+    <div class="meta">
+      <div class="name"></div>
+      <div class="dims"></div>
+      <div class="status">En attente…</div>
+      <div class="actions">
+        <a class="btn dl" aria-disabled="true">Télécharger</a>
+        <button class="rm" aria-label="Retirer l'image">✕</button>
+      </div>
+    </div>
+  </li>
+</template>
+
+<script src="vendor/pica.min.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script>
+const MAX_LONG = 3840, MAX_SHORT = 2160;
+const resizer = pica();
+const items = [];   // { file, el, preview, status: 'queued'|'working'|'done'|'error', blob, url, outName, removed }
+let running = false;
+
+const $ = id => document.getElementById(id);
+const grid = $('grid'), info = $('info'), zipBtn = $('zip'), clearBtn = $('clear'), progress = $('progress');
+
+// Fit inside a 4K UHD frame (3840×2160, or 2160×3840 for portrait), keeping the aspect ratio.
+function fit4k(w, h) {
+  const s = Math.min(MAX_LONG / Math.max(w, h), MAX_SHORT / Math.min(w, h));
+  return [Math.max(1, Math.round(w * s)), Math.max(1, Math.round(h * s))];
+}
+console.assert(fit4k(1920, 1080) + '' === '3840,2160', 'fit4k 16:9');
+console.assert(fit4k(600, 800) + '' === '2160,2880', 'fit4k portrait');
+console.assert(fit4k(500, 500) + '' === '2160,2160', 'fit4k square');
+console.assert(fit4k(1000, 200) + '' === '3840,768', 'fit4k panorama');
+
+// Photos -> JPEG (small files); formats that may carry transparency -> PNG.
+function outputType(file) {
+  return /png|gif|webp|bmp|svg|avif|tiff|icon/i.test(file.type) ? ['image/png', 'png'] : ['image/jpeg', 'jpg'];
+}
+
+function addFiles(files) {
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue;
+    const el = $('tpl').content.firstElementChild.cloneNode(true);
+    const item = { file, el, status: 'queued', preview: URL.createObjectURL(file) };
+    const img = el.querySelector('img');
+    img.onerror = () => img.hidden = true;
+    img.src = item.preview;
+    el.querySelector('.name').textContent = el.querySelector('.name').title = file.name;
+    el.querySelector('.rm').onclick = () => removeItem(item);
+    grid.append(el);
+    items.push(item);
+  }
+  refresh();
+  run();
+}
+
+function removeItem(item) {
+  item.removed = true;
+  URL.revokeObjectURL(item.preview);
+  if (item.url) URL.revokeObjectURL(item.url);
+  item.el.remove();
+  items.splice(items.indexOf(item), 1);
+  refresh();
+}
+
+function setStatus(item, status, text) {
+  item.status = status;
+  const s = item.el.querySelector('.status');
+  s.className = 'status ' + status;
+  s.textContent = text;
+  refresh();
+}
+
+function refresh() {
+  const count = s => items.filter(i => i.status === s).length;
+  const done = count('done'), errors = count('error'), finished = done + errors, n = items.length;
+  zipBtn.disabled = done === 0;
+  zipBtn.textContent = 'Tout télécharger (.zip)' + (done ? ` · ${done}` : '');
+  clearBtn.disabled = n === 0;
+  progress.hidden = n === 0;
+  progress.max = n || 1;
+  progress.value = finished;
+  info.textContent = !n ? 'Aucune image pour le moment.'
+    : `${done} / ${n} image${n > 1 ? 's' : ''} en 4K` +
+      (errors ? ` · ${errors} erreur${errors > 1 ? 's' : ''}` : '') +
+      (finished < n ? ' · traitement en cours…' : ' · terminé');
+}
+
+// One image at a time: pica already splits each resize across several web workers,
+// and sequential processing keeps memory bounded on big batches.
+async function run() {
+  if (running) return;
+  running = true;
+  let item;
+  while ((item = items.find(i => i.status === 'queued'))) {
+    setStatus(item, 'working', 'Agrandissement en cours…');
+    let bitmap, canvas;
+    try {
+      bitmap = await createImageBitmap(item.file);
+      const [w, h] = fit4k(bitmap.width, bitmap.height);
+      item.el.querySelector('.dims').textContent = `${bitmap.width} × ${bitmap.height} → ${w} × ${h}`;
+      canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      await resizer.resize(bitmap, canvas, { filter: 'lanczos3', unsharpAmount: 80, unsharpRadius: 0.6, unsharpThreshold: 2 });
+      const [mime, ext] = outputType(item.file);
+      const blob = await resizer.toBlob(canvas, mime, 0.95);
+      if (item.removed) continue;
+      item.blob = blob;
+      item.url = URL.createObjectURL(blob);
+      item.outName = item.file.name.replace(/\.[^.]+$/, '') + '_4k.' + ext;
+      const a = item.el.querySelector('.dl');
+      a.href = item.url; a.download = item.outName; a.removeAttribute('aria-disabled');
+      setStatus(item, 'done', `Terminé · ${blob.size < 1048576 ? Math.ceil(blob.size / 1024) + ' Ko' : (blob.size / 1048576).toFixed(1) + ' Mo'}`);
+    } catch (e) {
+      console.error(e);
+      if (!item.removed) setStatus(item, 'error', 'Erreur : image illisible ou format non pris en charge par ce navigateur');
+    } finally {
+      bitmap?.close();
+      if (canvas) canvas.width = canvas.height = 0; // free the 4K canvas right away
+    }
+  }
+  running = false;
+}
+
+zipBtn.onclick = async () => {
+  const done = items.filter(i => i.status === 'done');
+  zipBtn.disabled = true;
+  zipBtn.textContent = 'Création du ZIP…';
+  try {
+    const zip = new JSZip(), used = new Set();
+    for (const i of done) {
+      let name = i.outName, n = 1;
+      while (used.has(name)) name = i.outName.replace(/(\.[^.]+)$/, `_${n++}$1`);
+      used.add(name);
+      zip.file(name, i.blob);
+    }
+    // Images are already compressed: STORE avoids wasting time recompressing them.
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement('a'), { href: url, download: 'images_4k.zip' });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) {
+    console.error(e);
+    alert('Impossible de créer le ZIP : ' + e.message);
+  }
+  refresh();
+};
+
+clearBtn.onclick = () => [...items].forEach(removeItem);
+
+const drop = $('drop'), input = $('input');
+input.onchange = () => { addFiles(input.files); input.value = ''; };
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); addFiles(e.dataTransfer.files); });
+document.addEventListener('paste', e => addFiles([...e.clipboardData.files]));
+</script>
+</body>
+</html>
