@@ -30,7 +30,9 @@
   .drop:hover, .drop.over, .drop:focus-within { border-color: var(--accent); background: var(--soft); }
   .drop strong { font-size: 1.1rem; }
   .drop span { color: var(--muted); font-size: .9rem; }
-  .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  /* The real file input covers the whole zone: a direct tap opens the file picker on every browser, mobile included. */
+  .drop input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+  .drop .pick { margin-top: 6px; padding: 8px 18px; border-radius: 10px; background: var(--accent); color: var(--accent-text); font-weight: 600; font-size: .95rem; }
   .drop svg { width: 40px; height: 40px; color: var(--accent); }
 
   .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 20px 0 12px; }
@@ -86,10 +88,16 @@
     </svg>
     <strong>Glissez vos images ici ou cliquez pour les choisir</strong>
     <span>Plusieurs images à la fois · JPG, PNG, WebP, GIF, BMP, AVIF… · ou collez avec Ctrl+V</span>
-    <input id="input" type="file" accept="image/*" multiple>
+    <span class="pick" aria-hidden="true">📂 Parcourir mes fichiers</span>
+    <input id="input" type="file" accept="image/*" multiple aria-label="Choisir des images">
   </label>
 
   <section class="opts" aria-label="Réglages de sortie">
+    <div><span class="label" id="modeLbl">Moteur</span>
+      <div class="seg" id="mode" role="group" aria-labelledby="modeLbl">
+        <button data-v="fast" aria-pressed="true">⚡ Rapide</button>
+        <button data-v="ai" aria-pressed="false">✨ IA (meilleure qualité, plus lent)</button>
+      </div></div>
     <div><span class="label" id="orientLbl">Format</span>
       <div class="seg" id="orient" role="group" aria-labelledby="orientLbl">
         <button data-v="land" aria-pressed="true">🖥️ Paysage (écran PC)</button>
@@ -134,6 +142,9 @@
 
 <script src="vendor/pica.min.js"></script>
 <script src="vendor/jszip.min.js"></script>
+<script src="vendor/tf.min.js"></script>
+<script src="vendor/upscaler.min.js"></script>
+<script src="vendor/esrgan-slim-x4/model.min.js"></script>
 <script>
 const resizer = pica();
 const items = [];   // { file, el, preview, status: 'queued'|'working'|'done'|'error', blob, url, outName, removed }
@@ -144,7 +155,29 @@ const grid = $('grid'), info = $('info'), zipBtn = $('zip'), clearBtn = $('clear
 
 // Target frames as [long side, short side]; "Appareil" is added by device detection.
 const RES = { '1080p': [1920, 1080], '2K': [2560, 1440], '4K': [3840, 2160] };
-let res = '4K', orient = 'land', gen = 0; // gen bumps on every settings change
+let res = '4K', orient = 'land', mode = 'fast', gen = 0; // gen bumps on every settings change
+$('mode').onclick = e => { const v = e.target.closest('button')?.dataset.v; if (v && v !== mode) { mode = v; choose('mode', v); applySettings(); } };
+
+// AI mode: ESRGAN (x4) rebuilds detail, then Lanczos fits the exact target size.
+// The input is first brought to ~target/4 so the network never does more work than needed.
+let aiModel;
+async function aiUpscale(bitmap, w, h, onProgress) {
+  aiModel ??= new Upscaler({ model: { ...ESRGANSlim4x, path: 'vendor/esrgan-slim-x4/model.json' } });
+  const sw = Math.min(bitmap.width, Math.ceil(w / 4)), sh = Math.min(bitmap.height, Math.ceil(h / 4));
+  const small = document.createElement('canvas');
+  small.width = sw; small.height = sh;
+  await resizer.resize(bitmap, small, { filter: 'lanczos3' });
+  const input = tf.browser.fromPixels(small);
+  small.width = small.height = 0;
+  const out = await aiModel.upscale(input, { output: 'tensor', patchSize: 64, padding: 6, progress: onProgress });
+  input.dispose();
+  const px = tf.tidy(() => out.clipByValue(0, 255).cast('int32'));
+  out.dispose();
+  const big = document.createElement('canvas');
+  await tf.browser.toPixels(px, big);
+  px.dispose();
+  return big;
+}
 
 // Fit inside the frame (landscape W×H, or H×W in portrait), keeping the image's aspect ratio.
 function fit(w, h, [long, short] = RES[res], o = orient) {
@@ -259,14 +292,21 @@ async function run() {
   while ((item = items.find(i => i.status === 'queued'))) {
     setStatus(item, 'working', 'Agrandissement en cours…');
     let bitmap, canvas;
-    const g = gen, tag = res.toLowerCase();
+    const g = gen, useAi = mode === 'ai', tag = res.toLowerCase() + (useAi ? '_ia' : '');
+    let src;
     try {
       bitmap = await createImageBitmap(item.file);
       const [w, h] = fit(bitmap.width, bitmap.height);
       item.el.querySelector('.dims').textContent = `${bitmap.width} × ${bitmap.height} → ${w} × ${h}`;
       canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
-      await resizer.resize(bitmap, canvas, { filter: 'lanczos3', unsharpAmount: 80, unsharpRadius: 0.6, unsharpThreshold: 2 });
+      // AI only helps when enlarging; a bigger source is just downscaled.
+      if (useAi && w > bitmap.width) {
+        setStatus(item, 'working', 'IA : chargement du modèle…');
+        src = await aiUpscale(bitmap, w, h, p => setStatus(item, 'working', `IA : ${Math.round(p * 100)} %`));
+      }
+      await resizer.resize(src || bitmap, canvas, src ? { filter: 'lanczos3' }
+        : { filter: 'lanczos3', unsharpAmount: 80, unsharpRadius: 0.6, unsharpThreshold: 2 });
       const [mime, ext] = outputType(item.file);
       const blob = await resizer.toBlob(canvas, mime, 0.95);
       if (item.removed) continue;
@@ -282,7 +322,8 @@ async function run() {
       if (!item.removed) setStatus(item, 'error', 'Erreur : image illisible ou format non pris en charge par ce navigateur');
     } finally {
       bitmap?.close();
-      if (canvas) canvas.width = canvas.height = 0; // free the 4K canvas right away
+      if (canvas) canvas.width = canvas.height = 0; // free the 4K canvases right away
+      if (src) src.width = src.height = 0;
     }
   }
   running = false;
