@@ -64,13 +64,21 @@
   .actions .btn { flex: 1; justify-content: center; padding: 7px 10px; font-size: .88rem; }
   .actions .btn[aria-disabled="true"] { opacity: .45; pointer-events: none; }
   .actions button { padding: 7px 12px; font-size: .88rem; }
+  .opts { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 22px; margin-top: 16px; padding: 14px 16px;
+          background: var(--card); border: 1px solid var(--border); border-radius: 14px; }
+  .opts .label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: 4px; }
+  .seg { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+  .seg button { padding: 7px 12px; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  #detectInfo { flex-basis: 100%; font-size: .85rem; color: var(--muted); margin: 0; }
+  #detectInfo:empty { display: none; }
   footer { margin-top: 40px; color: var(--muted); font-size: .82rem; text-align: center; }
 </style>
 </head>
 <body>
 <main>
   <h1>Upscaler 4K</h1>
-  <p class="sub">Agrandissez vos images en 4K (3840 × 2160). Tout se fait dans votre navigateur : vos images ne quittent jamais votre appareil.</p>
+  <p class="sub">Agrandissez vos images en 1080p, 2K, 4K ou à la résolution de votre écran, en paysage ou en vertical. Tout se fait dans votre navigateur : vos images ne quittent jamais votre appareil.</p>
 
   <label class="drop" id="drop">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -80,6 +88,22 @@
     <span>Plusieurs images à la fois · JPG, PNG, WebP, GIF, BMP, AVIF… · ou collez avec Ctrl+V</span>
     <input id="input" type="file" accept="image/*" multiple>
   </label>
+
+  <section class="opts" aria-label="Réglages de sortie">
+    <div><span class="label" id="orientLbl">Format</span>
+      <div class="seg" id="orient" role="group" aria-labelledby="orientLbl">
+        <button data-v="land" aria-pressed="true">🖥️ Paysage (écran PC)</button>
+        <button data-v="port" aria-pressed="false">📱 Vertical (téléphone)</button>
+      </div></div>
+    <div><span class="label" id="resLbl">Résolution</span>
+      <div class="seg" id="res" role="group" aria-labelledby="resLbl">
+        <button data-v="1080p" aria-pressed="false">1080p</button>
+        <button data-v="2K" aria-pressed="false">2K</button>
+        <button data-v="4K" aria-pressed="true">4K</button>
+      </div></div>
+    <button id="detect">🔍 Détecter mon appareil</button>
+    <p id="detectInfo" aria-live="polite"></p>
+  </section>
 
   <div class="bar">
     <div class="info" id="info" aria-live="polite">Aucune image pour le moment.</div>
@@ -111,7 +135,6 @@
 <script src="vendor/pica.min.js"></script>
 <script src="vendor/jszip.min.js"></script>
 <script>
-const MAX_LONG = 3840, MAX_SHORT = 2160;
 const resizer = pica();
 const items = [];   // { file, el, preview, status: 'queued'|'working'|'done'|'error', blob, url, outName, removed }
 let running = false;
@@ -119,15 +142,59 @@ let running = false;
 const $ = id => document.getElementById(id);
 const grid = $('grid'), info = $('info'), zipBtn = $('zip'), clearBtn = $('clear'), progress = $('progress');
 
-// Fit inside a 4K UHD frame (3840×2160, or 2160×3840 for portrait), keeping the aspect ratio.
-function fit4k(w, h) {
-  const s = Math.min(MAX_LONG / Math.max(w, h), MAX_SHORT / Math.min(w, h));
+// Target frames as [long side, short side]; "Appareil" is added by device detection.
+const RES = { '1080p': [1920, 1080], '2K': [2560, 1440], '4K': [3840, 2160] };
+let res = '4K', orient = 'land', gen = 0; // gen bumps on every settings change
+
+// Fit inside the frame (landscape W×H, or H×W in portrait), keeping the image's aspect ratio.
+function fit(w, h, [long, short] = RES[res], o = orient) {
+  const [W, H] = o === 'land' ? [long, short] : [short, long];
+  const s = Math.min(W / w, H / h);
   return [Math.max(1, Math.round(w * s)), Math.max(1, Math.round(h * s))];
 }
-console.assert(fit4k(1920, 1080) + '' === '3840,2160', 'fit4k 16:9');
-console.assert(fit4k(600, 800) + '' === '2160,2880', 'fit4k portrait');
-console.assert(fit4k(500, 500) + '' === '2160,2160', 'fit4k square');
-console.assert(fit4k(1000, 200) + '' === '3840,768', 'fit4k panorama');
+console.assert(fit(1920, 1080, RES['4K'], 'land') + '' === '3840,2160', 'fit 16:9 landscape');
+console.assert(fit(1920, 1080, RES['4K'], 'port') + '' === '2160,1215', 'fit 16:9 into portrait');
+console.assert(fit(600, 800, RES['4K'], 'port') + '' === '2160,2880', 'fit portrait');
+console.assert(fit(500, 500, RES['1080p'], 'land') + '' === '1080,1080', 'fit square 1080p');
+
+function choose(groupId, value) {
+  for (const b of $(groupId).querySelectorAll('button')) b.setAttribute('aria-pressed', b.dataset.v === value);
+}
+// Settings changed: redo finished images with the new target.
+function applySettings() {
+  gen++;
+  for (const i of items.filter(i => i.status === 'done')) {
+    URL.revokeObjectURL(i.url);
+    i.blob = i.url = null;
+    const a = i.el.querySelector('.dl');
+    a.removeAttribute('href'); a.setAttribute('aria-disabled', 'true');
+    setStatus(i, 'queued', 'En attente…');
+  }
+  refresh();
+  run();
+}
+$('orient').onclick = e => { const v = e.target.closest('button')?.dataset.v; if (v && v !== orient) { orient = v; choose('orient', v); applySettings(); } };
+$('res').onclick = e => { const v = e.target.closest('button')?.dataset.v; if (v && v !== res) { res = v; choose('res', v); applySettings(); } };
+
+// Physical screen resolution = CSS pixels × devicePixelRatio.
+$('detect').onclick = () => {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round((screen?.width || 0) * dpr), h = Math.round((screen?.height || 0) * dpr);
+  if (!(w > 0 && h > 0)) {
+    $('detectInfo').textContent = 'Impossible de détecter votre appareil. Choisissez une résolution : 1080p, 2K ou 4K.';
+    $('res').querySelector('button').focus();
+    return;
+  }
+  RES.Appareil = [Math.max(w, h), Math.min(w, h)];
+  let btn = $('res').querySelector('[data-v="Appareil"]');
+  if (!btn) $('res').append(btn = document.createElement('button'));
+  btn.dataset.v = 'Appareil';
+  btn.textContent = `Mon appareil (${w} × ${h})`;
+  res = 'Appareil'; choose('res', res);
+  orient = h > w ? 'port' : 'land'; choose('orient', orient);
+  $('detectInfo').textContent = `Écran détecté : ${w} × ${h} px (${orient === 'port' ? 'vertical' : 'paysage'}). Les images sont agrandies à cette taille.`;
+  applySettings();
+};
 
 // Photos -> JPEG (small files); formats that may carry transparency -> PNG.
 function outputType(file) {
@@ -178,7 +245,7 @@ function refresh() {
   progress.max = n || 1;
   progress.value = finished;
   info.textContent = !n ? 'Aucune image pour le moment.'
-    : `${done} / ${n} image${n > 1 ? 's' : ''} en 4K` +
+    : `${done} / ${n} image${n > 1 ? 's' : ''} en ${res === 'Appareil' ? 'résolution de l’appareil' : res}` +
       (errors ? ` · ${errors} erreur${errors > 1 ? 's' : ''}` : '') +
       (finished < n ? ' · traitement en cours…' : ' · terminé');
 }
@@ -192,9 +259,10 @@ async function run() {
   while ((item = items.find(i => i.status === 'queued'))) {
     setStatus(item, 'working', 'Agrandissement en cours…');
     let bitmap, canvas;
+    const g = gen, tag = res.toLowerCase();
     try {
       bitmap = await createImageBitmap(item.file);
-      const [w, h] = fit4k(bitmap.width, bitmap.height);
+      const [w, h] = fit(bitmap.width, bitmap.height);
       item.el.querySelector('.dims').textContent = `${bitmap.width} × ${bitmap.height} → ${w} × ${h}`;
       canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
@@ -202,9 +270,10 @@ async function run() {
       const [mime, ext] = outputType(item.file);
       const blob = await resizer.toBlob(canvas, mime, 0.95);
       if (item.removed) continue;
+      if (g !== gen) { setStatus(item, 'queued', 'En attente…'); continue; } // settings changed mid-resize
       item.blob = blob;
       item.url = URL.createObjectURL(blob);
-      item.outName = item.file.name.replace(/\.[^.]+$/, '') + '_4k.' + ext;
+      item.outName = item.file.name.replace(/\.[^.]+$/, '') + `_${tag}_${w}x${h}.` + ext;
       const a = item.el.querySelector('.dl');
       a.href = item.url; a.download = item.outName; a.removeAttribute('aria-disabled');
       setStatus(item, 'done', `Terminé · ${blob.size < 1048576 ? Math.ceil(blob.size / 1024) + ' Ko' : (blob.size / 1048576).toFixed(1) + ' Mo'}`);
@@ -252,7 +321,7 @@ zipBtn.onclick = async () => {
     }
     // Images are already compressed: STORE avoids wasting time recompressing them.
     const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
-    await saveFile('images_4k.zip', blob);
+    await saveFile('images_upscalees.zip', blob);
   } catch (e) {
     if (e?.code === 'declined') return refresh();
     console.error(e);
