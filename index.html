@@ -236,7 +236,7 @@ function outputType(file) {
 
 function addFiles(files) {
   for (const file of files) {
-    if (!file.type.startsWith('image/')) continue;
+    // No type filter: phones often label gallery/cloud photos "" or octet-stream; the decoder decides and errors are shown.
     const el = $('tpl').content.firstElementChild.cloneNode(true);
     const item = { file, el, status: 'queued', preview: URL.createObjectURL(file) };
     const img = el.querySelector('img');
@@ -319,7 +319,9 @@ async function run() {
       setStatus(item, 'done', `Terminé · ${blob.size < 1048576 ? Math.ceil(blob.size / 1024) + ' Ko' : (blob.size / 1048576).toFixed(1) + ' Mo'}`);
     } catch (e) {
       console.error(e);
-      if (!item.removed) setStatus(item, 'error', 'Erreur : image illisible ou format non pris en charge par ce navigateur');
+      if (!item.removed) setStatus(item, 'error', /hei[cf]/i.test(item.file.type + item.file.name)
+        ? 'Erreur : format HEIC (iPhone) non lu par ce navigateur. Exportez la photo en JPEG ou ouvrez le site dans Safari.'
+        : 'Erreur : image illisible ou format non pris en charge par ce navigateur');
     } finally {
       bitmap?.close();
       if (canvas) canvas.width = canvas.height = 0; // free the 4K canvases right away
